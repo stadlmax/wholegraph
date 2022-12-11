@@ -17,6 +17,7 @@
 
 #include <cuda_runtime_api.h>
 #include <stdio.h>
+#include <cstdlib>
 
 #define DivUp(X, Y) (((X) + (Y) -1) / (Y))
 #define AlignUp(X, ALIGN_SIZE) (((X) + (ALIGN_SIZE) -1) / (ALIGN_SIZE) * (ALIGN_SIZE))

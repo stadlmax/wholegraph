@@ -20,6 +20,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <wait.h>
+#include <cstdlib>
 
 #include <functional>
 #include <iostream>
@@ -27,7 +28,7 @@
 #include <thread>
 #include <vector>
 
-#include "random.cuh"
+#include "../wholegraph/random.cuh"
 #include "whole_chunked_memory.cuh"
 
 #define TIME_DIFF_US(TVS, TVE) ((TVE.tv_sec - TVS.tv_sec) * 1000ULL * 1000ULL + (TVE.tv_usec - TVS.tv_usec))

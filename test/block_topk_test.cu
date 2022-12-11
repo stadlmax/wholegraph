@@ -16,6 +16,7 @@
 #include <assert.h>
 #include <cuda_runtime_api.h>
 #include <stdio.h>
+#include <cstdlib>
 
 #include <algorithm>
 #include <experimental/random>

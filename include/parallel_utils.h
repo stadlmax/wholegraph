@@ -17,6 +17,7 @@
 
 #include <stdio.h>
 #include <unistd.h>
+#include <cstdlib>
 
 #include <functional>
 #include <vector>
@@ -35,10 +36,13 @@ void MultiThreadRun(int size, std::function<void(int, int)> f);
  */
 void MultiProcessRun(int size, std::function<void(int, int)> f);
 
-inline int CreatePipes(std::vector<std::array<int, 2>> *pipes, int nproc) {
+inline int CreatePipes(std::vector<std::array<int, 2>> *pipes, int nproc)
+{
   pipes->resize(nproc);
-  for (int i = 0; i < nproc; i++) {
-    if (pipe((*pipes)[i].data()) == -1) {
+  for (int i = 0; i < nproc; i++)
+  {
+    if (pipe((*pipes)[i].data()) == -1)
+    {
       fprintf(stderr, "Create pipe failed.\n");
       return -1;
     }
@@ -46,42 +50,52 @@ inline int CreatePipes(std::vector<std::array<int, 2>> *pipes, int nproc) {
   return 0;
 }
 
-template<typename T>
-inline void PipeBroadcast(int rank, int size, int root, const std::vector<std::array<int, 2>> &pipes, T *data) {
-  if (rank == root) {
-    for (int i = 0; i < size; i++) {
+template <typename T>
+inline void PipeBroadcast(int rank, int size, int root, const std::vector<std::array<int, 2>> &pipes, T *data)
+{
+  if (rank == root)
+  {
+    for (int i = 0; i < size; i++)
+    {
       auto wret = write(pipes[i][1], data, sizeof(T));
-      if (wret != sizeof(T)) {
+      if (wret != sizeof(T))
+      {
         fprintf(stderr, "write to pipe failed.\n");
         abort();
       }
     }
   }
   auto rret = read(pipes[rank][0], data, sizeof(T));
-  if (rret != sizeof(T)) {
+  if (rret != sizeof(T))
+  {
     fprintf(stderr, "read from pipe failed.\n");
     abort();
   }
 }
 
-template<typename T>
+template <typename T>
 inline void PipeGroupBroadcast(int rank,
                                int size,
                                int group_root,
                                int group_size,
                                const std::vector<std::array<int, 2>> &pipes,
-                               T *data) {
-  if (rank % group_size == group_root) {
-    for (int i = rank - group_root; i < rank - group_root + group_size; i++) {
+                               T *data)
+{
+  if (rank % group_size == group_root)
+  {
+    for (int i = rank - group_root; i < rank - group_root + group_size; i++)
+    {
       auto wret = write(pipes[i][1], data, sizeof(T));
-      if (wret != sizeof(T)) {
+      if (wret != sizeof(T))
+      {
         fprintf(stderr, "write to pipe failed.\n");
         abort();
       }
     }
   }
   auto rret = read(pipes[rank][0], data, sizeof(T));
-  if (rret != sizeof(T)) {
+  if (rret != sizeof(T))
+  {
     fprintf(stderr, "read from pipe failed.\n");
     abort();
   }

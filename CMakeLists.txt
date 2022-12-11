@@ -51,7 +51,7 @@ message(STATUS "CMAKE_BUILD_TYPE is ${CMAKE_BUILD_TYPE}")
 find_package(Threads)
 
 # CUDA
-find_package(CUDAToolkit REQUIRED 11.0)
+find_package(CUDAToolkit REQUIRED 11.6)
 
 # NCCL
 include(${PROJECT_SOURCE_DIR}/cmake/thirdparty/get_nccl.cmake)
@@ -60,11 +60,11 @@ set(USE_CXX11_ABI TRUE)
 
 if (WHOLEGRAPH_NEED_PYTHON)
     # PYTHON
-    find_package(Python 3.6 COMPONENTS Interpreter REQUIRED)
+    find_package(Python 3.8 COMPONENTS Interpreter REQUIRED)
     set(PY_EXE ${Python_EXECUTABLE})
     message(STATUS "Using python ${Python_EXECUTABLE}")
 
-    find_package(PythonLibs 3.6 REQUIRED)
+    find_package(PythonLibs 3.8 REQUIRED)
     include_directories(${PYTHON_INCLUDE_DIRS})
     message(STATUS "Using python include dirs ${PYTHON_INCLUDE_DIRS}")
 
@@ -137,9 +137,6 @@ else()
     target_compile_definitions(whole_graph PUBLIC -D_GLIBCXX_USE_CXX11_ABI=0)
 endif()
 
-target_link_libraries(whole_graph PRIVATE CUDA::cuda_driver NCCL::NCCL)
-target_link_libraries(whole_graph PUBLIC CUDA::cudart)
-
 if (WHOLEGRAPH_BUILD_PYTORCH)
     message(STATUS "Building PyTorch support library")
     add_subdirectory(wholegraph/torch)
@@ -149,3 +146,6 @@ if (WHOLEGRAPH_ENABLE_TESTS)
     message(STATUS "Test enabled")
     add_subdirectory(test)
 endif ()
+
+target_link_libraries(whole_graph PRIVATE CUDA::cuda_driver NCCL::NCCL)
+target_link_libraries(whole_graph PUBLIC CUDA::cudart)

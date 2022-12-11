@@ -15,6 +15,7 @@
  */
 #include <stdio.h>
 #include <unistd.h>
+#include <cstdlib>
 
 #include <cuda_runtime_api.h>
 
