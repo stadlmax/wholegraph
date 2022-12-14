@@ -11,12 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM gitlab-master.nvidia.com:5005/mstadler/docker/wholegraph:pyg-dep
+FROM gitlab-master.nvidia.com:5005/mstadler/docker/wholegraph:dgl-dep
 
-COPY . /workspace/lib/wholegraph
-RUN cd /workspace/lib/wholegraph &&\
-    mkdir build && cd build &&\
-    cmake -DCMAKE_BUILD_TYPE=Release .. &&\
-    make -j
-
-COPY ./export_env.sh /workspace/
+RUN useradd -r -u 1968 -g 30 mstadler
+USER mstadler
