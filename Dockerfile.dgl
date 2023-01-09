@@ -19,4 +19,5 @@ RUN cd /workspace/lib/wholegraph &&\
     cmake -DCMAKE_BUILD_TYPE=Release .. &&\
     make -j
 
-COPY ./export_env.sh /workspace/
+ENV WHOLEGRAPH_PATH="/workspace/lib/wholegraph"
+ENV PYTHONPATH="${PYTHONPATH}:${WHOLEGRAPH_PATH}/python:${WHOLEGRAPH_PATH}/build"

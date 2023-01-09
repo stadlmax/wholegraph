@@ -1,0 +1,23 @@
+# Copyright (c) 2022, NVIDIA CORPORATION.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+FROM gitlab-master.nvidia.com:5005/mstadler/docker/wholegraph:dgl
+
+RUN mkdir -p /opt/cugraph-ops &&\
+    cd /opt/cugraph-ops &&\
+    wget  https://anaconda.org/rapidsai-nightly/libcugraphops/23.02.00a230109/download/linux-64/libcugraphops-23.02.00a230109-cuda11_g7b2a0f0f_49.tar.bz2 &&\
+    wget https://anaconda.org/rapidsai-nightly/pylibcugraphops/23.02.00a230109/download/linux-64/pylibcugraphops-23.02.00a230109-cuda11_py38_g7b2a0f0f_49.tar.bz2 &&\
+    tar -xf libcugraphops-23.02.00a230109-cuda11_g7b2a0f0f_49.tar.bz2 &&\
+    tar -xf pylibcugraphops-23.02.00a230109-cuda11_py38_g7b2a0f0f_49.tar.bz2 
+
+ENV PYTHONPATH="${PYTHONPATH}:/opt/cugraph-ops/lib/python3.8/site-packages"
