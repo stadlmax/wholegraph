@@ -108,6 +108,14 @@ parser.add_option(
     default=False,
     help="whether use nccl for embeddings, default False",
 )
+NSYS_TRAIN_STEPS = 101
+parser.add_option(
+    "--nsys",
+    action="store_true",
+    dest="nsys",
+    default=False,
+    help="if profiling with nsys, cut training short and terminate early (at most 100 steps) and don't validate"
+)
 
 (options, args) = parser.parse_args()
 
@@ -418,7 +426,8 @@ def train_torch_sampler(train_data, valid_data, model, optimizer):
     skip_count = 8
     skip_epoch_time = time.time()
     train_start_time = time.time()
-    while epoch < options.epochs:
+    do_train = True
+    while do_train and epoch < options.epochs:
         for i, (idx, label) in enumerate(train_dataloader):
             label = torch.reshape(label, (-1,)).cuda()
             optimizer.zero_grad()
@@ -437,6 +446,9 @@ def train_torch_sampler(train_data, valid_data, model, optimizer):
                     )
                 )
             train_step = train_step + 1
+            if options.nsys and train_step > NSYS_TRAIN_STEPS:
+                do_train = False
+                break
         epoch = epoch + 1
         if epoch == skip_count:
             skip_epoch_time = time.time()
@@ -452,7 +464,8 @@ def train_torch_sampler(train_data, valid_data, model, optimizer):
             "[EPOCH_TIME] %.2f seconds"
             % ((train_end_time - skip_epoch_time) / (options.epochs - skip_count),)
         )
-    valid(valid_dataloader, model)
+    if not options.nsys:
+        valid(valid_dataloader, model)
 
 
 def create_train_dataset(data_tensor_dict, rank, size):
@@ -484,6 +497,9 @@ def train(train_data, valid_data, model, optimizer):
     total_steps = get_train_step(
         len(train_data["idx"]), options.epochs, options.batchsize, comm.get_world_size()
     )
+    if options.nsys:
+        total_steps = min(total_steps, NSYS_TRAIN_STEPS)
+
     if comm.get_rank() == 0:
         print(
             "epoch=%d total_steps=%d"
@@ -542,7 +558,8 @@ def train(train_data, valid_data, model, optimizer):
                     / (options.epochs - comm.get_world_size()),
                 )
             )
-    valid(valid_dataloader, model)
+    if not options.nsys:
+        valid(valid_dataloader, model)
 
 
 def main():
@@ -609,7 +626,8 @@ def main():
     print("Rank=%d, optimizer created." % (comma.Get_rank(),))
 
     train(train_data, valid_data, model, optimizer)
-    test(test_data, model)
+    if not options.nsys:
+        test(test_data, model)
 
     wg.finalize_lib()
     print("Rank=%d, wholegraph shutdown." % (comma.Get_rank(),))

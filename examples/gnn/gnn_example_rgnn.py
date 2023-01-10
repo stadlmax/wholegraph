@@ -111,6 +111,15 @@ parser.add_option(
     default=False,
     help="whether use nccl for embeddings, default False",
 )
+NSYS_TRAIN_STEPS = 101
+parser.add_option(
+    "--nsys",
+    action="store_true",
+    dest="nsys",
+    default=False,
+    help="if profiling with nsys, cut training short and terminate early (at most 100 steps) and don't validate"
+)
+
 (options, args) = parser.parse_args()
 
 # https://github.com/snap-stanford/ogb/blob/master/examples/lsc/mag240m/rgnn.py
@@ -1051,7 +1060,10 @@ def train(train_data, valid_data, model, graph, optimizer):
         % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),)
     )
     step_id = 0
+    do_train = True
     for epoch in range(options.epochs):
+        if options.nsys and not do_train:
+            break
         train_sampler.set_epoch(epoch)
         model.train()
         epoch_start = time.time()
@@ -1076,6 +1088,10 @@ def train(train_data, valid_data, model, graph, optimizer):
                 )
             step_id += 1
 
+            if step_id > NSYS_TRAIN_STEPS:
+                do_train = False
+                break
+
         epoch_train_end = time.time()
 
         if comm.get_rank() == 0:
@@ -1086,32 +1102,34 @@ def train(train_data, valid_data, model, graph, optimizer):
                     epoch_train_end - epoch_start,
                 )
             )
-        model.eval()
-        correct = torch.LongTensor([0]).cuda()
-        total = torch.LongTensor([0]).cuda()
-        for i, (idx, label) in enumerate(valid_dataloader):
-            with torch.no_grad():
-                y = torch.reshape(label, (-1,)).cuda()
-                mfgs, x = build_subgraph(idx, graph, max_neighbors)
-                y_hat = model(mfgs, x)
-                correct += (y_hat.argmax(1) == y).sum().item()
-                total += y_hat.shape[0]
+        
+        if not options.nsys:
+            model.eval()
+            correct = torch.LongTensor([0]).cuda()
+            total = torch.LongTensor([0]).cuda()
+            for i, (idx, label) in enumerate(valid_dataloader):
+                with torch.no_grad():
+                    y = torch.reshape(label, (-1,)).cuda()
+                    mfgs, x = build_subgraph(idx, graph, max_neighbors)
+                    y_hat = model(mfgs, x)
+                    correct += (y_hat.argmax(1) == y).sum().item()
+                    total += y_hat.shape[0]
 
-        # `reduce` data into process 0
-        torch.distributed.reduce(correct, dst=0, op=torch.distributed.ReduceOp.SUM)
-        torch.distributed.reduce(total, dst=0, op=torch.distributed.ReduceOp.SUM)
-        acc = (correct / total).cpu().item()
-        epoch_valid_end = time.time()
-        if comm.get_rank() == 0:
-            print(
-                "[%s] [VALID] time=%f epoch=%d acc=%f"
-                % (
-                    datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    epoch_valid_end - epoch_train_end,
-                    epoch,
-                    acc,
+            # `reduce` data into process 0
+            torch.distributed.reduce(correct, dst=0, op=torch.distributed.ReduceOp.SUM)
+            torch.distributed.reduce(total, dst=0, op=torch.distributed.ReduceOp.SUM)
+            acc = (correct / total).cpu().item()
+            epoch_valid_end = time.time()
+            if comm.get_rank() == 0:
+                print(
+                    "[%s] [VALID] time=%f epoch=%d acc=%f"
+                    % (
+                        datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        epoch_valid_end - epoch_train_end,
+                        epoch,
+                        acc,
+                    )
                 )
-            )
 
         sched.step()
 
