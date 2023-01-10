@@ -11,5 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM gitlab-master.nvidia.com:5005/mstadler/docker/wholegraph:dev
-RUN conda install -y -c rapidsai-nightly libcugraphops pylibcugraphops 
+FROM gitlab-master.nvidia.com:5005/mstadler/docker/wholegraph:cug-pyg
+
+RUN useradd -r -u 1968 -g 30 mstadler
+USER mstadler
