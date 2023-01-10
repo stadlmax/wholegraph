@@ -110,6 +110,14 @@ parser.add_option(
     default=False,
     help="whether use nccl for embeddings, default False",
 )
+NSYS_TRAIN_STEPS = 101
+parser.add_option(
+    "--nsys",
+    action="store_true",
+    dest="nsys",
+    default=False,
+    help="if profiling with nsys, cut training short and terminate early (at most 100 steps) and don't validate",
+)
 
 (options, args) = parser.parse_args()
 
@@ -158,7 +166,7 @@ def create_gnn_layers(in_feat_dim, hidden_feat_dim, class_count, num_layer, num_
             gnn_layers.append(
                 GATConv(
                     layer_input_dim,
-                    layer_output_dim // num_head,
+                    layer_output_dim,
                     num_heads=num_head,
                     mean_output=mean_output,
                 )
@@ -170,21 +178,16 @@ def create_gnn_layers(in_feat_dim, hidden_feat_dim, class_count, num_layer, num_
 
 
 def create_sub_graph(
-    target_gid,
-    target_gid_1,
-    edge_data,
     csr_row_ptr,
     csr_col_ind,
     sample_dup_count,
-    add_self_loop: bool,
+    sample_size,
 ):
-    assert options.framework == "cugraphops"
-    return [csr_row_ptr, csr_col_ind, sample_dup_count]
+    return [csr_row_ptr, csr_col_ind, sample_dup_count, sample_size]
 
 
 def layer_forward(layer, x_feat, sub_graph):
-    assert options.framework == "cugraphops":
-    return layer(sub_graph[0], sub_graph[1], sub_graph[2], x_feat)
+    return layer(x_feat, *sub_graph)
 
 
 class HomoGNNModel(torch.nn.Module):
@@ -216,22 +219,19 @@ class HomoGNNModel(torch.nn.Module):
         ids = ids.to(self.graph.id_type()).cuda()
         (
             target_gids,
-            edge_indice,
+            _,
             csr_row_ptrs,
             csr_col_inds,
-            sample_dup_counts,
+            sample_dup_count,
         ) = self.graph.unweighted_sample_without_replacement(ids, self.max_neighbors)
         x_feat = self.gather_fn(target_gids[0], self.graph.node_feat)
         # x_feat = self.graph.gather(target_gids[0])
         for i in range(self.num_layer):
             sub_graph = create_sub_graph(
-                target_gids[i],
-                target_gids[i + 1],
-                edge_indice[i],
                 csr_row_ptrs[i],
                 csr_col_inds[i],
-                sample_dup_counts[i],
-                self.add_self_loop,
+                sample_dup_count[i],
+                self.max_neighbors[self.num_layer - i - 1],
             )
             x_feat = layer_forward(self.gnn_layers[i], x_feat, sub_graph)
             if i != self.num_layer - 1:
@@ -387,6 +387,9 @@ def train(train_data, valid_data, model, optimizer):
     total_steps = get_train_step(
         len(train_data["idx"]), options.epochs, options.batchsize, comm.get_world_size()
     )
+    if options.nsys:
+        total_steps = min(total_steps, NSYS_TRAIN_STEPS)
+
     if comm.get_rank() == 0:
         print(
             "epoch=%d total_steps=%d"
@@ -400,30 +403,31 @@ def train(train_data, valid_data, model, optimizer):
     loss_fcn = torch.nn.CrossEntropyLoss()
     skip_world_size_epoch_time = 0
     train_start_time = time.time()
-    while train_step < total_steps:
-        if epoch == 1:
-            skip_world_size_epoch_time = time.time()
-        for i, (idx, label) in enumerate(train_dataloader):
-            if train_step >= total_steps:
-                break
-            label = torch.reshape(label, (-1,)).cuda()
-            optimizer.zero_grad()
-            model.train()
-            logits = model(idx)
-            loss = loss_fcn(logits, label)
-            loss.backward()
-            optimizer.step()
-            if comm.get_rank() == 0 and train_step % 100 == 0:
-                print(
-                    "[%s] [LOSS] step=%d, loss=%f"
-                    % (
-                        datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        train_step,
-                        loss.cpu().item(),
+    with torch.autograd.profiler.emit_nvtx():
+        while train_step < total_steps:
+            if epoch == 1:
+                skip_world_size_epoch_time = time.time()
+            for i, (idx, label) in enumerate(train_dataloader):
+                if train_step >= total_steps:
+                    break
+                label = torch.reshape(label, (-1,)).cuda()
+                optimizer.zero_grad()
+                model.train()
+                logits = model(idx)
+                loss = loss_fcn(logits, label)
+                loss.backward()
+                optimizer.step()
+                if comm.get_rank() == 0 and train_step % 100 == 0:
+                    print(
+                        "[%s] [LOSS] step=%d, loss=%f"
+                        % (
+                            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            train_step,
+                            loss.cpu().item(),
+                        )
                     )
-                )
-            train_step = train_step + 1
-        epoch = epoch + 1
+                train_step = train_step + 1
+            epoch = epoch + 1
     comm.synchronize()
     train_end_time = time.time()
     train_time = train_end_time - train_start_time
@@ -445,7 +449,8 @@ def train(train_data, valid_data, model, optimizer):
                     / (options.epochs - comm.get_world_size()),
                 )
             )
-    valid(valid_dataloader, model)
+    if not options.nsys:
+        valid(valid_dataloader, model)
 
 
 def main():
@@ -512,7 +517,8 @@ def main():
     print("Rank=%d, optimizer created." % (comma.Get_rank(),))
 
     train(train_data, valid_data, model, optimizer)
-    test(test_data, model)
+    if not options.nsys:
+        test(test_data, model)
 
     wg.finalize_lib()
     print("Rank=%d, wholegraph shutdown." % (comma.Get_rank(),))

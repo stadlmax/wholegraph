@@ -114,7 +114,7 @@ parser.add_option(
     action="store_true",
     dest="nsys",
     default=False,
-    help="if profiling with nsys, cut training short and terminate early (at most 100 steps) and don't validate"
+    help="if profiling with nsys, cut training short and terminate early (at most 100 steps) and don't validate",
 )
 
 (options, args) = parser.parse_args()
@@ -513,30 +513,31 @@ def train(train_data, valid_data, model, optimizer):
     loss_fcn = torch.nn.CrossEntropyLoss()
     skip_world_size_epoch_time = 0
     train_start_time = time.time()
-    while train_step < total_steps:
-        if epoch == 1:
-            skip_world_size_epoch_time = time.time()
-        for i, (idx, label) in enumerate(train_dataloader):
-            if train_step >= total_steps:
-                break
-            label = torch.reshape(label, (-1,)).cuda()
-            optimizer.zero_grad()
-            model.train()
-            logits = model(idx)
-            loss = loss_fcn(logits, label)
-            loss.backward()
-            optimizer.step()
-            if comm.get_rank() == 0 and train_step % 100 == 0:
-                print(
-                    "[%s] [LOSS] step=%d, loss=%f"
-                    % (
-                        datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        train_step,
-                        loss.cpu().item(),
+    with torch.autograd.profiler.emit_nvtx():
+        while train_step < total_steps:
+            if epoch == 1:
+                skip_world_size_epoch_time = time.time()
+            for i, (idx, label) in enumerate(train_dataloader):
+                if train_step >= total_steps:
+                    break
+                label = torch.reshape(label, (-1,)).cuda()
+                optimizer.zero_grad()
+                model.train()
+                logits = model(idx)
+                loss = loss_fcn(logits, label)
+                loss.backward()
+                optimizer.step()
+                if comm.get_rank() == 0 and train_step % 100 == 0:
+                    print(
+                        "[%s] [LOSS] step=%d, loss=%f"
+                        % (
+                            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            train_step,
+                            loss.cpu().item(),
+                        )
                     )
-                )
-            train_step = train_step + 1
-        epoch = epoch + 1
+                train_step = train_step + 1
+            epoch = epoch + 1
     comm.synchronize()
     train_end_time = time.time()
     train_time = train_end_time - train_start_time

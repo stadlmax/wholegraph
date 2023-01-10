@@ -3,15 +3,15 @@ import torch.nn as nn
 
 from typing import Union
 
-from pylibcugraphops import make_mfg_csr, make_mfg_csr_hg
+from pylibcugraphops import make_mfg_csr, make_mfg_csr_hg, make_fg_csr, make_fg_csr_hg
 import pylibcugraphops.torch.autograd as cugraphops
 
 
 def create_mfg_csr(csr_row_ptr, csr_col_idx, sample_size):
-    n_in_nodes = len(csr_row_ptr) - 1
-    in_nodes = torch.arange(n_in_nodes, device="cuda", dtype=csr_row_ptr.dtype)
-    n_out_nodes = csr_col_idx.max()
-    out_nodes = torch.arange(n_out_nodes, device="cuda", dtype=csr_col_idx.dtype)
+    n_out_nodes = len(csr_row_ptr) - 1
+    n_in_nodes = csr_col_idx.max().item() + 1
+    out_nodes = torch.arange(n_out_nodes, device="cuda", dtype=csr_row_ptr.dtype)
+    in_nodes = torch.arange(n_in_nodes, device="cuda", dtype=csr_col_idx.dtype)
     return make_mfg_csr(out_nodes, in_nodes, csr_row_ptr, csr_col_idx, sample_size)
 
 
@@ -55,12 +55,16 @@ class SAGEConv(nn.Module):
 
     def forward(
         self,
+        x_feat,
         csr_row_ptr,
         csr_col_ind,
+        _,
         sample_count,
-        x_feat,
     ):
+        torch.cuda.nvtx.range_push("create_mfg_csr")
         mfg = create_mfg_csr(csr_row_ptr, csr_col_ind, sample_count)
+        torch.cuda.nvtx.range_pop()
+
         x_agg = cugraphops.agg_concat_n2n(x_feat, mfg, "mean")
 
         y = self.lin(x_agg)
@@ -87,7 +91,6 @@ class GATConv(nn.Module):
         self.add_self_loops = add_self_loops
         self.mean_output = mean_output
         self.negative_slope = negative_slope
-
         self.lin = torch.nn.Linear(in_channels, self.out_channels, bias=False)
         self.attn_weights = torch.nn.Parameter(
             torch.FloatTensor(size=(1, self.out_channels * 2))
@@ -96,49 +99,36 @@ class GATConv(nn.Module):
 
     def reset_parameters(self):
         gain = torch.nn.init.calculate_gain("relu")
-        torch.nn.init.xavier.normal_(self.lin.weight, gain=gain)
-        torch.nn.init.xavier.normal_(self.attn_weights[:, : self.out_channels])
-        torch.nn.init.xavier.normal_(self.attn_weights[:, self.out_channels :])
+        torch.nn.init.xavier_uniform_(self.lin.weight, gain=gain)
+        torch.nn.init.xavier_uniform_(self.attn_weights[:, : self.out_channels])
+        torch.nn.init.xavier_uniform_(self.attn_weights[:, self.out_channels :])
 
-    def forward(self, csr_row_ptr, csr_col_ind, sample_count, x_feat):
+    def forward(self, x_feat, csr_row_ptr, csr_col_ind, sample_dup_count, sample_count):
 
-        if self.add_self_loop:
+        if self.add_self_loops:
             (
                 csr_row_ptr_looped,
                 csr_col_ind_looped,
-                sample_count_looped,
+                _,
             ) = torch.ops.wholegraph.csr_add_self_loop(
-                csr_row_ptr, csr_col_ind, sample_count
+                csr_row_ptr, csr_col_ind, sample_dup_count
             )
+            sample_count += 1
 
-        mfg = create_mfg_csr(
-            csr_row_ptr_looped, csr_col_ind_looped, sample_count_looped
-        )
+        torch.cuda.nvtx.range_push("create_mfg_csr")
+        mfg = create_mfg_csr(csr_row_ptr_looped, csr_col_ind_looped, sample_count)
+        torch.cuda.nvtx.range_pop()
+        x_lin = self.lin(x_feat)
 
         y = cugraphops.mha_gat_n2n(
-            x_feat,
-            self.attn_weights,
+            x_lin,
+            self.attn_weights.squeeze(),
             mfg,
             num_heads=self.num_heads,
             activation="LeakyReLU",
             negative_slope=self.negative_slope,
-            concat_heads=True,
+            concat_heads=not self.mean_output,
         )
-
-        if self.mean_output:
-            y_mean = None
-            for h in range(self.num_heads):
-                if y_mean is None:
-                    y_mean = (
-                        y[self.head_channels * h : self.head_channels * (h + 1)]
-                        / self.num_heads
-                    )
-                else:
-                    y_mean += (
-                        y[self.head_channels * h : self.head_channels * (h + 1)]
-                        / self.num_heads
-                    )
-            y = y_mean
 
         return y
 
@@ -184,9 +174,12 @@ class RGCNConv(nn.Module):
         dup_count = subgraph["dup_count"]
         edge_type = subgraph["edge_type"]
 
-        mfg = make_mfg_csr_hg(
+        torch.cuda.nvtx.range_push("create_mfg_csr_hg")
+        mfg = create_mfg_csr_hg(
             csr_row_ptr, csr_col_ind, edge_type, self.num_relations, dup_count
         )
+        torch.cuda.nvtx.range_pop()
+
         x_agg = cugraphops.agg_hg_basis_n2n_post(
             x_feat, None, mfg, not self.root_weight, bool(self.aggr == "mean")
         )
